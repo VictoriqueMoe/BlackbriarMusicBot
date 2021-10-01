@@ -9,4 +9,9 @@ export class OnReady {
         Main.initMusicPlayer();
         console.log("Bot logged in!");
     }
+
+    @On("interactionCreate")
+    private async intersectionInit([interaction]: ArgsOf<"interactionCreate">): Promise<void> {
+        await Main.client.executeInteraction(interaction);
+    }
 }

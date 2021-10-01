@@ -1,4 +1,4 @@
-import {ButtonComponent, Discord, Slash, SlashGroup, SlashOption} from "discordx";
+import {ButtonComponent, Discord, Slash, SlashOption} from "discordx";
 import {
     ButtonInteraction,
     CommandInteraction,
@@ -12,7 +12,6 @@ import {Main} from "../Main";
 import {InteractionUtils} from "../utils/Utils";
 
 @Discord()
-@SlashGroup("music", "Commands to play music from Youtube")
 export class Music {
 
     private static getGuildQueue(interaction: CommandInteraction | ButtonInteraction): Queue {
@@ -82,14 +81,14 @@ export class Music {
         description: "Plays or Queues a song"
     })
     private async play(
-        @SlashOption("search", {
+        @SlashOption("song", {
             description: "The song name or URL",
             required: true
         })
             search: string,
         @SlashOption("isplaylist", {
             description: "is this url a playlist",
-            required: true
+            required: false
         })
             isPlaylist: boolean,
         @SlashOption("timestamp", {
