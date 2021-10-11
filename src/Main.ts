@@ -1,16 +1,15 @@
 import {Intents} from "discord.js";
-import {Client} from "discordx";
+import {Client, DIService} from "discordx";
 import {Player} from "discord-music-player";
 import * as dotenv from "dotenv";
+import {container} from "tsyringe";
 
 dotenv.config({path: __dirname + '/../.env'});
 
 export class Main {
-    public static client: Client;
-    public static player: Player;
-
     public static async start(): Promise<void> {
-        Main.client = new Client({
+        DIService.container = container;
+        const client = new Client({
             botId: `blackbriarmusicbot`,
             prefix: "!",
             classes: [
@@ -30,14 +29,17 @@ export class Main {
             botGuilds: ["691775875116433477"],
             silent: false,
         });
-        await Main.client.login(process.env.token);
+        container.registerInstance(Client, client);
+        await client.login(process.env.token);
     }
 
     public static initMusicPlayer(): void {
-        Main.player = new Player(Main.client, {
+        const client = container.resolve(Client);
+        const player = new Player(client, {
             leaveOnEmpty: true,
             quality: "high"
         });
+        container.registerInstance(Player, player);
     }
 }
 

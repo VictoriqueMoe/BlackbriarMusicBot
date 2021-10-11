@@ -1,22 +1,21 @@
-import {ButtonInteraction, CommandInteraction, GuildMember, Message, SelectMenuInteraction} from "discord.js";
-import {APIInteractionGuildMember, APIMessage} from "discord-api-types";
+import {BaseCommandInteraction, GuildMember, MessageComponentInteraction} from "discord.js";
 
 export namespace InteractionUtils {
 
-    export async function followupWithText(interaction: CommandInteraction | ButtonInteraction | SelectMenuInteraction, content: string, ephemeral: boolean = false): Promise<Message | APIMessage> {
-        return interaction.followUp({
+    export async function followupWithText(interaction: BaseCommandInteraction | MessageComponentInteraction, content: string, ephemeral: boolean = false): Promise<void> {
+        await interaction.followUp({
             content,
             ephemeral
         });
     }
 
-    export async function editWithText(interaction: CommandInteraction | ButtonInteraction | SelectMenuInteraction, content: string): Promise<Message | APIMessage> {
-        return interaction.editReply({
+    export async function editWithText(interaction: BaseCommandInteraction | MessageComponentInteraction, content: string): Promise<void> {
+        await interaction.editReply({
             content
         });
     }
 
-    export async function replyWithText(interaction: CommandInteraction | ButtonInteraction | SelectMenuInteraction, content: string, ephemeral: boolean = false): Promise<void> {
+    export async function replyWithText(interaction: BaseCommandInteraction | MessageComponentInteraction, content: string, ephemeral: boolean = false): Promise<void> {
         if (interaction.deferred) {
             await interaction.editReply({
                 content
@@ -29,7 +28,7 @@ export namespace InteractionUtils {
         }
     }
 
-    export function getInteractionCaller(interaction: CommandInteraction): GuildMember | APIInteractionGuildMember {
+    export function getInteractionCaller(interaction: BaseCommandInteraction): GuildMember | null {
         const {member} = interaction;
         if (member == null) {
             interaction.reply("Unable to extract member");
@@ -38,6 +37,6 @@ export namespace InteractionUtils {
         if (member instanceof GuildMember) {
             return member;
         }
-        return member;
+        return null;
     }
 }

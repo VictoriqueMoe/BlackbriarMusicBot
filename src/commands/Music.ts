@@ -1,21 +1,40 @@
-import {ButtonComponent, Discord, Slash, SlashOption} from "discordx";
+import {Client, Discord, Slash, SlashGroup, SlashOption} from "discordx";
 import {
     ButtonInteraction,
     CommandInteraction,
     GuildMember,
+    Message,
     MessageActionRow,
     MessageButton,
-    MessageEmbed
+    MessageEmbed,
+    Util
 } from "discord.js";
-import {Playlist, Queue, Song} from "discord-music-player";
-import {Main} from "../Main";
+import {Player, Playlist, Queue, Song} from "discord-music-player";
 import {InteractionUtils} from "../utils/Utils";
+import {injectable} from "tsyringe";
+
+type MutatedQueue = Queue & {
+    isPaused?: boolean
+}
+(<MutatedQueue>Queue.prototype).isPaused = false;
+(function (): void {
+    const originalPause = (<MutatedQueue>Queue.prototype).setPaused;
+    (<MutatedQueue>Queue.prototype).setPaused = function setPaused(state?: boolean): boolean | undefined {
+        const ret = originalPause.call(this, state);
+        this.isPaused = state;
+        return ret;
+    };
+}());
 
 @Discord()
+@SlashGroup("music", "Commands to play music from Youtube")
+@injectable()
 export class Music {
+    constructor(private _player: Player, private _client: Client) {
+    }
 
-    private static getGuildQueue(interaction: CommandInteraction | ButtonInteraction): Queue {
-        return Main.player.getQueue(interaction.guildId);
+    private getGuildQueue(interaction: CommandInteraction | ButtonInteraction): MutatedQueue {
+        return this._player.getQueue(interaction.guildId);
     }
 
     @Slash("playercontrols", {
@@ -23,58 +42,98 @@ export class Music {
     })
     private async playerControls(interaction: CommandInteraction): Promise<void> {
         await interaction.deferReply();
+        const guildQueue = this.getGuildQueue(interaction);
+        if (!guildQueue) {
+            return InteractionUtils.replyWithText(interaction, "No songs are currently queued");
+        }
         const nextButton = new MessageButton()
             .setLabel("Next")
             .setEmoji("⏭")
             .setStyle("PRIMARY")
+            .setDisabled(!guildQueue.isPlaying)
             .setCustomId("btn-next");
-        const row = new MessageActionRow().addComponents(nextButton);
-        interaction.editReply({
+        const pauseButton = new MessageButton()
+            .setLabel("Play/Pause")
+            .setEmoji("⏯")
+            .setStyle("PRIMARY")
+            .setDisabled(!guildQueue.isPlaying)
+            .setCustomId("btn-pause");
+        const stopButton = new MessageButton()
+            .setLabel("Stop")
+            .setStyle("DANGER")
+            .setDisabled(!guildQueue.isPlaying)
+            .setCustomId("btn-stop");
+        const row = new MessageActionRow().addComponents(stopButton, pauseButton, nextButton);
+        const message = await interaction.followUp({
             content: "Music controls",
+            embeds: [this.getNowPlayingEmbed(guildQueue)],
+            fetchReply: true,
             components: [row]
         });
+        if (!(message instanceof Message)) {
+            throw Error("InvalidMessage instance");
+        }
+        const collector = message.createMessageComponentCollector();
+        collector.on("collect", async (collectInteraction: ButtonInteraction) => {
+            await collectInteraction.deferUpdate();
+            const guildQueue = this.getGuildQueue(interaction);
+            if (!guildQueue) {
+                await interaction.deleteReply();
+                return;
+            }
+            const buttonId = collectInteraction.customId;
+            switch (buttonId) {
+                case "btn-next": {
+                    guildQueue.skip();
+                    await Util.delayFor(900);
+                    break;
+                }
+                case "btn-pause":
+                    guildQueue.setPaused(!guildQueue.isPaused);
+                    break;
+                case "btn-stop":
+                    guildQueue.stop();
+                    await interaction.deleteReply();
+                    return;
+                case "btn-play":
+                    guildQueue.setPaused(false);
+                    break;
+            }
+            await collectInteraction.editReply({
+                embeds: [this.getNowPlayingEmbed(guildQueue)],
+                components: [row]
+            });
+        });
+        collector.on("end", async () => {
+            if (!message.editable || message.deleted) {
+                return;
+            }
+            await message.edit({components: []});
+        });
     }
 
-    @ButtonComponent("btn-next")
-    private async next(interaction: ButtonInteraction): Promise<void> {
-        await interaction.deferReply({
-            ephemeral: true
-        });
-        const guildQueue = Music.getGuildQueue(interaction);
-        if (!guildQueue) {
-            return InteractionUtils.replyWithText(interaction, "No songs are currently playing");
-        } else {
-            if (!guildQueue.isPlaying) {
-                return InteractionUtils.replyWithText(interaction, "No songs are currently playing");
+    private getNowPlayingEmbed(queue: MutatedQueue): MessageEmbed {
+        const currentlyPlaying = queue.nowPlaying;
+        const nextSong = queue.songs[1]?.name ?? "None";
+        const status = queue.isPlaying;
+        return new MessageEmbed()
+            .setTitle(`Controls`)
+            .addField("Status", queue.isPaused ? "Paused" : "Playing", true)
+            .addField("Song", currentlyPlaying.name, true)
+            .addField("Next Song", nextSong, false)
+            .setTimestamp();
+    }
+
+    private replaceButton(row: MessageActionRow, button: MessageButton): void {
+        const buttonIdToSearch = button.customId;
+        const {components} = row;
+        for (let i = 0; i < components.length; i++) {
+            const component = components[i];
+            if (component.customId === buttonIdToSearch) {
+                components[i] = button;
+                break;
             }
         }
-        const {member} = interaction;
-        if (!(member instanceof GuildMember)) {
-            return InteractionUtils.replyWithText(interaction, "Internal Error");
-        }
-        const vc = member.voice.channel;
-        if (!vc) {
-            return InteractionUtils.replyWithText(interaction, "You must first join the voice channel before you can use this");
-        }
-        guildQueue.skip();
-        const embed = Music.displayPlaylist(guildQueue);
-        await interaction.editReply({
-            embeds: [embed]
-        });
-    }
-
-    @Slash("nowplaying", {
-        description: "View the current playlist"
-    })
-    private async nowPlaying(interaction: CommandInteraction): Promise<void> {
-        const guildQueue = Music.getGuildQueue(interaction);
-        if (!guildQueue || !guildQueue.isPlaying) {
-            return InteractionUtils.replyWithText(interaction, "No songs are currently playing");
-        }
-        const embed = Music.displayPlaylist(guildQueue);
-        await interaction.reply({
-            embeds: [embed]
-        });
     }
 
     @Slash("play", {
@@ -99,9 +158,9 @@ export class Music {
         interaction: CommandInteraction
     ): Promise<void> {
         await interaction.deferReply();
-        const player = Main.player;
+        const player = this._player;
         const {guildId} = interaction;
-        const guildQueue = Music.getGuildQueue(interaction);
+        const guildQueue = this.getGuildQueue(interaction);
         const queue = player.createQueue(guildId);
         const member = InteractionUtils.getInteractionCaller(interaction);
         if (!(member instanceof GuildMember)) {
@@ -133,17 +192,15 @@ export class Music {
             }
             return InteractionUtils.replyWithText(interaction, `Unable to play ${search}`);
         }
-        const embed = Music.displayPlaylist(queue, newSong, member);
+        const embed = this.displayPlaylist(queue, newSong, member);
         await interaction.editReply({
             embeds: [embed]
         });
     }
 
-    private static displayPlaylist(queue: Queue, newSong?: Song | Playlist, memberWhoAddedSong?: GuildMember): MessageEmbed {
+    private displayPlaylist(queue: MutatedQueue, newSong?: Song | Playlist, memberWhoAddedSong?: GuildMember): MessageEmbed {
         const songs = queue.songs;
         const embed = new MessageEmbed().setColor('#FF470F').setTimestamp();
-        embed.addField("Currently playing", queue.nowPlaying.name);
-        embed.addField('\u200b', '\u200b');
         for (let i = 0; i < songs.length; i++) {
             const song = songs[i];
             embed.addField(`#${i + 1}`, song.name);
@@ -154,11 +211,11 @@ export class Music {
             embed.setDescription(`Current Playlist`);
         }
         if (memberWhoAddedSong) {
-            const avatar = memberWhoAddedSong.user.displayAvatarURL({format: 'jpg'});
+            const avatar = memberWhoAddedSong.user.displayAvatarURL({dynamic: true});
             embed.setAuthor(`${memberWhoAddedSong.displayName}`, avatar);
         } else {
-            const botImage = Main.client.user.displayAvatarURL({dynamic: true});
-            embed.setAuthor(`${Main.client.user.username}`, botImage);
+            const botImage = this._client.user.displayAvatarURL({dynamic: true});
+            embed.setAuthor(`${this._client.user.username}`, botImage);
         }
         return embed;
     }
