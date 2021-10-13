@@ -13,19 +13,6 @@ import {Player, Playlist, Queue, Song} from "discord-music-player";
 import {InteractionUtils} from "../utils/Utils";
 import {injectable} from "tsyringe";
 
-type MutatedQueue = Queue & {
-    isPaused?: boolean
-}
-(<MutatedQueue>Queue.prototype).isPaused = false;
-(function (): void {
-    const originalPause = (<MutatedQueue>Queue.prototype).setPaused;
-    (<MutatedQueue>Queue.prototype).setPaused = function setPaused(state?: boolean): boolean | undefined {
-        const ret = originalPause.call(this, state);
-        this.isPaused = state;
-        return ret;
-    };
-}());
-
 @Discord()
 @SlashGroup("music", "Commands to play music from Youtube")
 @injectable()
@@ -33,7 +20,7 @@ export class Music {
     constructor(private _player: Player, private _client: Client) {
     }
 
-    private getGuildQueue(interaction: CommandInteraction | ButtonInteraction): MutatedQueue {
+    private getGuildQueue(interaction: CommandInteraction | ButtonInteraction): Queue {
         return this._player.getQueue(interaction.guildId);
     }
 
@@ -77,10 +64,6 @@ export class Music {
         collector.on("collect", async (collectInteraction: ButtonInteraction) => {
             await collectInteraction.deferUpdate();
             const guildQueue = this.getGuildQueue(interaction);
-            if (!guildQueue) {
-                await interaction.deleteReply();
-                return;
-            }
             const buttonId = collectInteraction.customId;
             switch (buttonId) {
                 case "btn-next": {
@@ -89,7 +72,7 @@ export class Music {
                     break;
                 }
                 case "btn-pause":
-                    guildQueue.setPaused(!guildQueue.isPaused);
+                    guildQueue.setPaused(!guildQueue.paused);
                     break;
                 case "btn-stop":
                     guildQueue.stop();
@@ -112,13 +95,13 @@ export class Music {
         });
     }
 
-    private getNowPlayingEmbed(queue: MutatedQueue): MessageEmbed {
+    private getNowPlayingEmbed(queue: Queue): MessageEmbed {
         const currentlyPlaying = queue.nowPlaying;
         const nextSong = queue.songs[1]?.name ?? "None";
         const status = queue.isPlaying;
         return new MessageEmbed()
             .setTitle(`Controls`)
-            .addField("Status", queue.isPaused ? "Paused" : "Playing", true)
+            .addField("Status", queue.paused ? "Paused" : "Playing", true)
             .addField("Song", currentlyPlaying.name, true)
             .addField("Next Song", nextSong, false)
             .setTimestamp();
@@ -134,6 +117,20 @@ export class Music {
                 break;
             }
         }
+    }
+
+    @Slash("nowplaying", {
+        description: "View the current playlist"
+    })
+    private async nowPlaying(interaction: CommandInteraction): Promise<void> {
+        const guildQueue = this.getGuildQueue(interaction);
+        if (!guildQueue || !guildQueue.isPlaying) {
+            return InteractionUtils.replyWithText(interaction, "No songs are currently playing");
+        }
+        const embed = this.displayPlaylist(guildQueue);
+        await interaction.reply({
+            embeds: [embed]
+        });
     }
 
     @Slash("play", {
@@ -190,6 +187,7 @@ export class Music {
             if (!guildQueue) {
                 queue.stop();
             }
+            console.error(e);
             return InteractionUtils.replyWithText(interaction, `Unable to play ${search}`);
         }
         const embed = this.displayPlaylist(queue, newSong, member);
@@ -198,7 +196,7 @@ export class Music {
         });
     }
 
-    private displayPlaylist(queue: MutatedQueue, newSong?: Song | Playlist, memberWhoAddedSong?: GuildMember): MessageEmbed {
+    private displayPlaylist(queue: Queue, newSong?: Song | Playlist, memberWhoAddedSong?: GuildMember): MessageEmbed {
         const songs = queue.songs;
         const embed = new MessageEmbed().setColor('#FF470F').setTimestamp();
         for (let i = 0; i < songs.length; i++) {
