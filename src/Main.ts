@@ -11,7 +11,9 @@ export class Main {
         DIService.container = container;
         const client = new Client({
             botId: `blackbriarmusicbot`,
-            prefix: "!",
+            simpleCommand: {
+                prefix: "!"
+            },
             classes: [
                 `${__dirname}/{commands,events}/**/*.{ts,js}`
             ],
